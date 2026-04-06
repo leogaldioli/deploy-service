@@ -1,0 +1,14 @@
+{
+  "user/my-app": {
+    "secret": "generate-with: python3 -c 'import secrets; print(secrets.token_hex(32))'",
+    "deploy_script": "/opt/my-app/deploy.sh",
+    "branch": "main",
+    "log_file": "/opt/my-app/deploy.log"
+  },
+  "user/another-app": {
+    "secret": "different-secret-per-project",
+    "deploy_script": "/opt/another-app/deploy.sh",
+    "branch": "main",
+    "log_file": "/opt/another-app/deploy.log"
+  }
+}

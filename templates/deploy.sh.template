@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Deploy script template — copie e adapte para cada projeto.
+# Este script e executado pelo webhook na VPS apos cada push no main.
+set -euo pipefail
+
+# ══════════════════════════════════════
+# CONFIGURAR POR PROJETO
+# ══════════════════════════════════════
+PROJECT="__PROJECT_NAME__"
+DEPLOY_PATH="/opt/__PROJECT_NAME__"
+REPO_URL="https://github.com/__GITHUB_USER__/__PROJECT_NAME__.git"
+IMAGE_NAME="__PROJECT_NAME__:latest"
+COMPOSE_FILE="docker-compose.prod.yml"
+# Build args (adicione/remova conforme necessario)
+BUILD_ARGS_FROM_ENV=(
+  # "NEXT_PUBLIC_SUPABASE_URL"
+  # "NEXT_PUBLIC_SUPABASE_ANON_KEY"
+)
+# ══════════════════════════════════════
+
+REPO_PATH="${DEPLOY_PATH}/repo"
+LOG_FILE="${DEPLOY_PATH}/deploy.log"
+
+# Usa credenciais de /root/.git-credentials para repos privados
+GIT_CRED=$(cat /root/.git-credentials 2>/dev/null | head -1)
+if [ -n "$GIT_CRED" ]; then
+  REPO_URL="${GIT_CRED}/__GITHUB_USER__/__PROJECT_NAME__.git"
+fi
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] [$PROJECT] $1" >> "$LOG_FILE"; }
+
+# Lock para evitar deploys simultaneos
+LOCKFILE="${DEPLOY_PATH}/.deploy.lock"
+exec 200>"$LOCKFILE"
+if ! flock -n 200; then
+  log "Deploy already in progress, skipping"
+  exit 0
+fi
+
+log "=== Deploy started ==="
+
+# Clone ou pull
+if [ -d "$REPO_PATH/.git" ]; then
+  cd "$REPO_PATH"
+  git fetch origin main 2>>"$LOG_FILE"
+  git reset --hard origin/main 2>>"$LOG_FILE"
+  log "Git pull done"
+else
+  git clone "$REPO_URL" "$REPO_PATH" 2>>"$LOG_FILE" || {
+    log "ERROR: git clone failed — configure /root/.git-credentials"
+    exit 1
+  }
+  cd "$REPO_PATH"
+  log "Git clone done"
+fi
+
+# Monta build args
+BUILD_ARGS=""
+ENV_FILE="${DEPLOY_PATH}/.env.production"
+for VAR_NAME in "${BUILD_ARGS_FROM_ENV[@]}"; do
+  if [ -n "$VAR_NAME" ]; then
+    VAL=$(grep "^${VAR_NAME}=" "$ENV_FILE" | cut -d= -f2-)
+    BUILD_ARGS="$BUILD_ARGS --build-arg ${VAR_NAME}=${VAL}"
+  fi
+done
+
+# Build Docker
+log "Docker build starting..."
+docker build $BUILD_ARGS -t "$IMAGE_NAME" . >> "$LOG_FILE" 2>&1
+log "Docker build done"
+
+# Deploy
+cd "$DEPLOY_PATH"
+docker compose -f "$COMPOSE_FILE" up -d --force-recreate >> "$LOG_FILE" 2>&1
+docker image prune -f >> "$LOG_FILE" 2>&1
+
+log "=== Deploy completed ==="

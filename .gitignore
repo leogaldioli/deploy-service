@@ -1,0 +1,5 @@
+projects.json
+webhook.log
+*.log
+.deploy.lock
+__pycache__/

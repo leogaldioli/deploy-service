@@ -1,0 +1,13 @@
+[Unit]
+Description=deploy-service — GitHub Webhook Deploy Listener
+After=network.target docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/webhook/webhook-server.py
+WorkingDirectory=/opt/webhook
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

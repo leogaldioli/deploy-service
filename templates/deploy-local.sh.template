@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Deploy manual — roda do seu Mac, empacota codigo e envia via SCP para a VPS.
+# Uso: ./deploy.sh [--skip-tests]
+set -euo pipefail
+
+# ══════════════════════════════════════
+# CONFIGURAR POR PROJETO
+# ══════════════════════════════════════
+VPS_HOST="__VPS_HOST__"
+VPS_USER="root"
+DEPLOY_PATH="/opt/__PROJECT_NAME__"
+APP_NAME="__PROJECT_NAME__"
+TEST_CMD="npx vitest run"  # ou "npm test", "pytest", etc.
+# ══════════════════════════════════════
+
+SKIP_TESTS=false
+for arg in "$@"; do
+  case $arg in
+    --skip-tests) SKIP_TESTS=true ;;
+  esac
+done
+
+# Testes
+if [ "$SKIP_TESTS" = false ] && [ -n "$TEST_CMD" ]; then
+  echo "Rodando testes..."
+  $TEST_CMD
+  echo ""
+fi
+
+# Empacota codigo
+echo "Empacotando codigo..."
+TMPFILE=$(mktemp /tmp/deploy-XXXXXX.tar.gz)
+tar czf "$TMPFILE" \
+  --exclude=node_modules \
+  --exclude=.next \
+  --exclude=.git \
+  --exclude='.env*' \
+  --exclude=coverage \
+  --exclude=.DS_Store \
+  --exclude=__pycache__ \
+  --exclude=.venv \
+  .
+
+SIZE=$(du -h "$TMPFILE" | cut -f1)
+echo "   Pacote: $SIZE"
+
+# Envia para VPS
+echo "Enviando para VPS..."
+scp "$TMPFILE" "${VPS_USER}@${VPS_HOST}:${DEPLOY_PATH}/_build.tar.gz"
+rm "$TMPFILE"
+
+# Build + Deploy na VPS
+echo "Buildando e deployando na VPS..."
+ssh "${VPS_USER}@${VPS_HOST}" bash -s <<REMOTE
+set -euo pipefail
+cd ${DEPLOY_PATH}
+
+# Extrai codigo
+rm -rf _build
+mkdir _build
+tar xzf _build.tar.gz -C _build 2>/dev/null
+rm _build.tar.gz
+
+# Pega build args do .env.production (se existir)
+BUILD_ARGS=""
+if [ -f .env.production ]; then
+  while IFS= read -r line; do
+    case "\$line" in
+      NEXT_PUBLIC_*=*|VITE_*=*)
+        VAR_NAME=\$(echo "\$line" | cut -d= -f1)
+        BUILD_ARGS="\$BUILD_ARGS --build-arg \$line"
+        ;;
+    esac
+  done < .env.production
+fi
+
+# Build Docker
+cd _build
+docker build \$BUILD_ARGS -t ${APP_NAME}:latest .
+
+# Deploy
+cd ${DEPLOY_PATH}
+docker compose -f docker-compose.prod.yml up -d --force-recreate
+
+# Limpa
+rm -rf _build
+docker image prune -f
+
+echo ""
+echo "=== Container status ==="
+docker ps --filter name=${APP_NAME} --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+REMOTE
+
+echo ""
+echo "Deploy concluido!"
