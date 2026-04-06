@@ -11,6 +11,7 @@ DEPLOY_PATH="/opt/__PROJECT_NAME__"
 REPO_URL="https://github.com/__GITHUB_USER__/__PROJECT_NAME__.git"
 IMAGE_NAME="__PROJECT_NAME__:latest"
 COMPOSE_FILE="docker-compose.prod.yml"
+BUILD_MEMORY_LIMIT="2560m"  # Limite de RAM do docker build (evita OOM)
 # Build args (adicione/remova conforme necessario)
 BUILD_ARGS_FROM_ENV=(
   # "NEXT_PUBLIC_SUPABASE_URL"
@@ -34,6 +35,12 @@ LOCKFILE="${DEPLOY_PATH}/.deploy.lock"
 exec 200>"$LOCKFILE"
 if ! flock -n 200; then
   log "Deploy already in progress, skipping"
+  exit 0
+fi
+
+# Verificar se ja tem docker build rodando (qualquer projeto)
+if pgrep -f "docker build" > /dev/null 2>&1; then
+  log "Another docker build is running, skipping to avoid OOM"
   exit 0
 fi
 
@@ -66,7 +73,7 @@ done
 
 # Build Docker
 log "Docker build starting..."
-docker build $BUILD_ARGS -t "$IMAGE_NAME" . >> "$LOG_FILE" 2>&1
+docker build --memory="$BUILD_MEMORY_LIMIT" $BUILD_ARGS -t "$IMAGE_NAME" . >> "$LOG_FILE" 2>&1
 log "Docker build done"
 
 # Deploy
